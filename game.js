@@ -1,8 +1,25 @@
+// --- CONFIGURAÇÃO FIREBASE ---
+const firebaseConfig = {
+  apiKey: "AIzaSyC7ReGE08WxIWizl_LFCZfi--lX0pC9puM",
+  authDomain: "fps-for.firebaseapp.com",
+  projectId: "fps-for",
+  storageBucket: "fps-for.firebasestorage.app",
+  messagingSenderId: "1060982063527",
+  appId: "1:1060982063527:web:98ea23b2569cea849ff682"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+// --- VARIÁVEIS GLOBAIS ---
 const canvas = document.getElementById('game-canvas');
 const ctx = canvas.getContext('2d');
+let playerName = "";
+let gameState = 'LOGIN';
 
-let gameState = 'MENU';
 let saveData = { 
+  playerName: null,
+  uid: null,
   highScore: 0, 
   totalCoins: 0, 
   magnetLevel: 0, 
@@ -11,22 +28,77 @@ let saveData = {
   bonusTimeLevel: 0 
 };
 
-// --- RESPONSIVIDADE ---
-function resizeCanvas() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-  if(player) {
-    player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
-    player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+let player, enemies, bullets, coins, currentScore, sessionCoins, lastShot = 0;
+let doubleItems = []; 
+let bonusTimer = 0;   
+
+// --- SISTEMA DE CONTA E UID ---
+async function saveInitialName() {
+  const nameInput = document.getElementById('player-name-input').value.trim();
+  const btn = document.getElementById('btn-login');
+  
+  if (nameInput.length < 3 || nameInput.length > 15) {
+    alert("O nome deve ter entre 3 e 15 caracteres!");
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = "Verificando...";
+
+  try {
+    const userRef = db.collection("users").doc(nameInput.toLowerCase());
+    const doc = await userRef.get();
+
+    // Gera um UID se o jogador não tiver um salvo
+    const userUid = saveData.uid || "uid_" + Math.random().toString(36).substr(2, 9) + Date.now();
+
+    if (doc.exists) {
+      if (doc.data().uid !== userUid) {
+        alert("Este nome já está em uso por outro jogador!");
+        btn.disabled = false;
+        btn.textContent = "ENTRAR NO JOGO";
+        return;
+      }
+    }
+
+    // Reserva o nome e vincula ao UID
+    await userRef.set({ uid: userUid, lastLogin: Date.now() });
+
+    playerName = nameInput;
+    saveData.playerName = playerName;
+    saveData.uid = userUid;
+    saveToStorage();
+
+    document.getElementById('login-screen').classList.add('hidden');
+    document.getElementById('menu-screen').classList.remove('hidden');
+    gameState = 'MENU';
+
+  } catch (e) {
+    console.error(e);
+    alert("Erro ao conectar ao servidor.");
+    btn.disabled = false;
   }
 }
-window.addEventListener('resize', resizeCanvas);
-window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 200));
 
-// --- SALVAMENTO ---
+function changeName() {
+  if(confirm("Deseja trocar seu nome? Você precisará registrar um novo nome disponível.")) {
+    saveData.playerName = null;
+    saveToStorage();
+    location.reload();
+  }
+}
+
 const loadData = () => {
   const saved = localStorage.getItem('fpsForAllData');
-  if (saved) saveData = { ...saveData, ...JSON.parse(saved) };
+  if (saved) {
+    saveData = { ...saveData, ...JSON.parse(saved) };
+    if (saveData.playerName && saveData.uid) {
+      playerName = saveData.playerName;
+      document.getElementById('login-screen').classList.add('hidden');
+      document.getElementById('menu-screen').classList.remove('hidden');
+      gameState = 'MENU';
+    }
+  }
   updateMenuUI();
 };
 
@@ -35,18 +107,52 @@ const saveToStorage = () => {
   updateMenuUI();
 };
 
-let player, enemies, bullets, coins, currentScore, sessionCoins, lastShot = 0;
-let doubleItems = []; 
-let bonusTimer = 0;   
+// --- RANKING ONLINE ---
+async function saveOnlineScore(name, score) {
+  if (!saveData.uid) return;
+  try {
+    const scoreRef = db.collection("leaderboard").doc(saveData.uid);
+    const doc = await scoreRef.get();
+    
+    // Só atualiza se for o maior score deste UID
+    if (!doc.exists || score > doc.data().score) {
+      await scoreRef.set({
+        name: name,
+        score: score,
+        uid: saveData.uid,
+        date: Date.now()
+      });
+    }
+  } catch (e) { console.error(e); }
+}
+
+async function loadLeaderboard() {
+  const tbody = document.getElementById('leaderboard-body');
+  tbody.innerHTML = "Carregando...";
+  try {
+    const snapshot = await db.collection("leaderboard").orderBy("score", "desc").limit(10).get();
+    tbody.innerHTML = "";
+    let i = 1;
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      tbody.innerHTML += `<tr><td>${i}º</td><td>${data.name}</td><td>${data.score}</td></tr>`;
+      i++;
+    });
+  } catch (e) { tbody.innerHTML = "Erro ao carregar."; }
+}
+
+// --- JOGO (LOGICA PRESERVADA) ---
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
 
 function initVariables() {
   player = {
-    x: canvas.width/2, y: canvas.height/2, 
-    radius: 20, color: '#3498db', speed: 5.5,
-    health: saveData.maxHealth, 
-    maxHealth: saveData.maxHealth,
-    invincible: false, 
-    invTimer: 0
+    x: canvas.width/2, y: canvas.height/2, radius: 20, color: '#3498db', speed: 5.5,
+    health: saveData.maxHealth, maxHealth: saveData.maxHealth,
+    invincible: false, invTimer: 0
   };
   enemies = []; bullets = []; coins = []; doubleItems = [];
   currentScore = 0; sessionCoins = 0; lastShot = Date.now(); bonusTimer = 0;
@@ -56,11 +162,10 @@ function initVariables() {
 function toggleScreen(screenId) {
   document.querySelectorAll('.overlay-screen').forEach(s => s.classList.add('hidden'));
   document.getElementById(screenId).classList.remove('hidden');
-  updateMenuUI();
 }
 
 function updateMenuUI() {
-  document.getElementById('menu-stats').textContent = `Recorde: ${saveData.highScore} | Total Moedas: ${saveData.totalCoins}`;
+  document.getElementById('menu-stats').textContent = `Recorde: ${saveData.highScore} | Moedas: ${saveData.totalCoins}`;
   document.getElementById('shop-coins-val').textContent = saveData.totalCoins;
   
   const magnetCost = 100 + (saveData.magnetLevel * 200);
@@ -69,24 +174,24 @@ function updateMenuUI() {
   const bonusTimeCost = 200 + (saveData.bonusTimeLevel * 300);
 
   document.getElementById('magnet-status').textContent = `Nível: ${saveData.magnetLevel}`;
-  document.getElementById('fire-status').textContent = `Nível: ${saveData.fireRateLevel} / 10`;
-  document.getElementById('health-status').textContent = `Máximo: ${saveData.maxHealth} / 50`;
+  document.getElementById('fire-status').textContent = `Nível: ${saveData.fireRateLevel}/10`;
+  document.getElementById('health-status').textContent = `Máximo: ${saveData.maxHealth}/50`;
   document.getElementById('bonus-time-status').textContent = `Nível: ${saveData.bonusTimeLevel}`;
 
-  document.getElementById('btn-buy-magnet').textContent = `Upar (${magnetCost} Moedas)`;
+  document.getElementById('btn-buy-magnet').textContent = `Upar (${magnetCost})`;
   
   const btnFire = document.getElementById('btn-buy-fire');
   if(saveData.fireRateLevel >= 10) { btnFire.textContent = "MAX"; btnFire.disabled = true; }
-  else { btnFire.textContent = `Upar (${fireCost} Moedas)`; btnFire.disabled = false; }
+  else { btnFire.textContent = `Upar (${fireCost})`; }
 
   const btnHealth = document.getElementById('btn-buy-health');
   if(saveData.maxHealth >= 50) { btnHealth.textContent = "MAX"; btnHealth.disabled = true; }
-  else { btnHealth.textContent = `Upar (${healthReq} Score)`; btnHealth.disabled = false; }
+  else { btnHealth.textContent = `Upar (${healthReq} Recorde)`; }
 
-  document.getElementById('btn-buy-bonus-time').textContent = `Upar (${bonusTimeCost} Moedas)`;
+  document.getElementById('btn-buy-bonus-time').textContent = `Upar (${bonusTimeCost})`;
 }
 
-// --- LOGICA DA LOJA ---
+// --- COMPRAS ---
 function buyMagnet() {
   const cost = 100 + (saveData.magnetLevel * 200);
   if (saveData.totalCoins >= cost) { saveData.totalCoins -= cost; saveData.magnetLevel++; saveToStorage(); }
@@ -106,11 +211,11 @@ function buyBonusTime() {
   if (saveData.totalCoins >= cost) { saveData.totalCoins -= cost; saveData.bonusTimeLevel++; saveToStorage(); }
 }
 
-// --- FUNÇÕES DE JOGO ---
+// --- LOOP ---
 function startGame() {
   initVariables();
   gameState = 'PLAYING';
-  document.getElementById('menu-screen').classList.add('hidden');
+  toggleScreen('ui-hud'); 
   document.getElementById('ui-hud').classList.remove('hidden');
   document.getElementById('pause-btn').classList.remove('hidden');
   document.getElementById('joysticks').classList.remove('hidden');
@@ -118,12 +223,15 @@ function startGame() {
 
 function pauseGame() { if(gameState === 'PLAYING') { gameState = 'PAUSED'; document.getElementById('pause-screen').classList.remove('hidden'); } }
 function resumeGame() { gameState = 'PLAYING'; document.getElementById('pause-screen').classList.add('hidden'); }
+
 function quitGame() {
   saveData.totalCoins += sessionCoins;
+  if (currentScore > 0) saveOnlineScore(playerName, currentScore);
   if (currentScore > saveData.highScore) saveData.highScore = currentScore;
   saveToStorage();
-  location.reload();
+  setTimeout(() => { location.reload(); }, 500);
 }
+
 function resetData() { if(confirm("Apagar tudo?")) { localStorage.clear(); location.reload(); } }
 
 // --- CONTROLES (JOYSTICKS) ---
@@ -154,7 +262,7 @@ function setupJoy(joy) {
   window.addEventListener('touchend', e => {
     for (let t of e.changedTouches) {
       if (t.identifier === joy.identifier) {
-        joy.active = false; joy.identifier = null; joy.x = 0; joy.y = 0;
+        joy.active = false; joy.x = 0; joy.y = 0;
         el.querySelector('.inner').style.transform = 'translate(-50%,-50%)';
       }
     }
@@ -167,10 +275,8 @@ function updateHUD() {
   document.getElementById('score-display').textContent = `Score: ${currentScore}`;
   document.getElementById('coins-display').textContent = `Moedas: ${sessionCoins}`;
   const bonusDiv = document.getElementById('bonus-display');
-  if(bonusTimer > 0) {
-    bonusDiv.style.display = 'block';
-    bonusDiv.textContent = `X2 COINS: ${Math.ceil(bonusTimer / 60)}s`;
-  } else { bonusDiv.style.display = 'none'; }
+  if(bonusTimer > 0) { bonusDiv.style.display = 'block'; bonusDiv.textContent = `X2 COINS: ${Math.ceil(bonusTimer / 60)}s`; } 
+  else { bonusDiv.style.display = 'none'; }
 }
 
 function spawnItemPack(amount) {
@@ -187,12 +293,10 @@ function spawnDoubleItem() {
   doubleItems.push({ x: 50 + Math.random() * (canvas.width - 100), y: 50 + Math.random() * (canvas.height - 100), radius: 18, color: '#2ecc71', life: 600 });
 }
 
-// --- LOOP PRINCIPAL ---
 function update() {
   if (gameState === 'PLAYING') {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Movimentação do Jogador
     if (moveJoy.active) {
       player.x += (moveJoy.x/50)*player.speed;
       player.y += (moveJoy.y/50)*player.speed;
@@ -200,11 +304,9 @@ function update() {
     player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
     player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
 
-    // Lógica de Invencibilidade e Bônus
     if (player.invincible) { player.invTimer--; if (player.invTimer <= 0) player.invincible = false; }
     if(bonusTimer > 0) { bonusTimer--; if(bonusTimer % 60 === 0) updateHUD(); }
 
-    // Lógica de Tiro (Cadência baseada no Nível)
     const now = Date.now();
     let currentFireRate = 150 - (saveData.fireRateLevel * 12); 
     if (shootJoy.active && (Math.abs(shootJoy.x) > 10 || Math.abs(shootJoy.y) > 10)) {
@@ -220,33 +322,23 @@ function update() {
       if(b.x < -10 || b.x > canvas.width + 10 || b.y < -10 || b.y > canvas.height + 10) bullets.splice(bi, 1);
     });
 
-    // Inimigos e COLISÃO DE DANO (Original preservada)
     enemies.forEach((e, ei) => {
       const a = Math.atan2(player.y - e.y, player.x - e.x);
       e.x += Math.cos(a)*e.speed; e.y += Math.sin(a)*e.speed;
-      
-      // Se tocar no player e não estiver invencível
       if(Math.hypot(player.x-e.x, player.y-e.y) < player.radius+e.radius && !player.invincible) {
-        player.health--; 
-        player.invincible = true; 
-        player.invTimer = 60; // 1 segundo de piscar
-        enemies.splice(ei, 1); 
-        updateHUD();
+        player.health--; player.invincible = true; player.invTimer = 60;
+        enemies.splice(ei, 1); updateHUD();
         if(player.health <= 0) quitGame();
       }
-      
-      // Se for atingido por um tiro
       bullets.forEach((b, bi) => {
         if(Math.hypot(b.x-e.x, b.y-e.y) < b.radius+e.radius) {
-          currentScore += 10; 
-          updateHUD();
+          currentScore += 10; updateHUD();
           if(Math.random() < 0.3) coins.push({x: e.x, y: e.y, radius: 8, color: '#f1c40f'});
           enemies.splice(ei, 1); bullets.splice(bi, 1);
         }
       });
     });
 
-    // Coleta de Moedas e Ímã
     coins.forEach((c, ci) => {
       const dist = Math.hypot(player.x-c.x, player.y-c.y);
       const magnetRange = 50 + (saveData.magnetLevel * 45);
@@ -255,42 +347,30 @@ function update() {
         c.x += Math.cos(a)*9; c.y += Math.sin(a)*9;
       }
       if(dist < player.radius + c.radius) { 
-        sessionCoins += (bonusTimer > 0 ? 2 : 1); 
-        updateHUD(); 
-        coins.splice(ci, 1); 
+        sessionCoins += (bonusTimer > 0 ? 2 : 1); updateHUD(); coins.splice(ci, 1); 
       }
     });
 
-    // Item Duplicador (Tempo afetado pelo Upgrade)
     doubleItems.forEach((item, ii) => {
       item.life--;
       if(item.life <= 0) doubleItems.splice(ii, 1);
       if(Math.hypot(player.x - item.x, player.y - item.y) < player.radius + item.radius) {
-        const duration = 600 + (saveData.bonusTimeLevel * 180); // 10s base + 3s por nível
-        bonusTimer = duration; 
-        doubleItems.splice(ii, 1); 
-        updateHUD();
+        bonusTimer = 600 + (saveData.bonusTimeLevel * 180); 
+        doubleItems.splice(ii, 1); updateHUD();
       }
     });
 
-    // Spawns
     if (Math.random() < (0.02 + Math.min(currentScore/10000, 0.04))) {
       const speedBase = 2 + Math.random() + Math.min(currentScore/2000, 2);
       enemies.push({x: Math.random()*canvas.width, y: -30, radius: 15, color: '#e74c3c', speed: speedBase});
     }
-    if (Math.random() < 0.0015) { spawnItemPack(25); }
-    if (Math.random() < 0.001) { spawnDoubleItem(); }
+    if (Math.random() < 0.0015) spawnItemPack(25);
+    if (Math.random() < 0.001) spawnDoubleItem();
 
-    // --- DESENHO ---
     enemies.forEach(e => drawCirc(e));
     bullets.forEach(b => drawCirc(b));
     coins.forEach(c => drawCirc(c));
-    doubleItems.forEach(item => {
-      ctx.shadowBlur = 15; ctx.shadowColor = item.color;
-      drawCirc(item); ctx.shadowBlur = 0;
-    });
-    
-    // Efeito Visual de Dano (Piscar)
+    doubleItems.forEach(item => { ctx.shadowBlur = 15; ctx.shadowColor = item.color; drawCirc(item); ctx.shadowBlur = 0; });
     if(!player.invincible || player.invTimer % 10 < 5) drawCirc(player);
   }
   requestAnimationFrame(update);
