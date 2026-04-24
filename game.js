@@ -19,7 +19,7 @@ let gameState = 'LOGIN';
 
 let saveData = { 
   playerName: null,
-  uid: null,
+  uid: null, // UID fixo para identificar a conta
   highScore: 0, 
   totalCoins: 0, 
   magnetLevel: 0, 
@@ -32,13 +32,14 @@ let player, enemies, bullets, coins, currentScore, sessionCoins, lastShot = 0;
 let doubleItems = []; 
 let bonusTimer = 0;   
 
-// --- SISTEMA DE CONTA E UID ---
+// --- SISTEMA DE LOGIN E UID FIXO ---
 async function saveInitialName() {
-  const nameInput = document.getElementById('player-name-input').value.trim();
+  const inputEl = document.getElementById('player-name-input');
+  const nameInput = inputEl.value.trim();
   const btn = document.getElementById('btn-login');
   
   if (nameInput.length < 3 || nameInput.length > 15) {
-    alert("O nome deve ter entre 3 e 15 caracteres!");
+    alert("Nome deve ter entre 3 e 15 caracteres!");
     return;
   }
 
@@ -46,52 +47,55 @@ async function saveInitialName() {
   btn.textContent = "Verificando...";
 
   try {
+    // 1. Gera um UID fixo se o jogador não tiver um
+    if (!saveData.uid) {
+      saveData.uid = "u_" + Math.random().toString(36).substr(2, 9) + Date.now();
+    }
+
+    // 2. Consulta se o nome já existe no banco
     const userRef = db.collection("users").doc(nameInput.toLowerCase());
     const doc = await userRef.get();
 
-    // Gera um UID se o jogador não tiver um salvo
-    const userUid = saveData.uid || "uid_" + Math.random().toString(36).substr(2, 9) + Date.now();
-
     if (doc.exists) {
-      if (doc.data().uid !== userUid) {
-        alert("Este nome já está em uso por outro jogador!");
+      // Se o nome existe, o UID deve ser o mesmo do jogador atual
+      if (doc.data().uid !== saveData.uid) {
+        alert("Este nome já pertence a outro jogador!");
         btn.disabled = false;
-        btn.textContent = "ENTRAR NO JOGO";
+        btn.textContent = "CRIAR CONTA / ENTRAR";
         return;
       }
     }
 
-    // Reserva o nome e vincula ao UID
-    await userRef.set({ uid: userUid, lastLogin: Date.now() });
+    // 3. Salva a posse do nome no banco de dados
+    await userRef.set({
+      uid: saveData.uid,
+      displayName: nameInput,
+      lastActive: Date.now()
+    });
 
+    // 4. Salva localmente e libera o jogo
     playerName = nameInput;
     saveData.playerName = playerName;
-    saveData.uid = userUid;
     saveToStorage();
 
     document.getElementById('login-screen').classList.add('hidden');
     document.getElementById('menu-screen').classList.remove('hidden');
     gameState = 'MENU';
 
-  } catch (e) {
-    console.error(e);
-    alert("Erro ao conectar ao servidor.");
+  } catch (error) {
+    console.error("Erro no Firebase:", error);
+    alert("Erro ao conectar ao Firebase. Verifique suas regras de segurança ou conexão.");
     btn.disabled = false;
+    btn.textContent = "CRIAR CONTA / ENTRAR";
   }
 }
 
-function changeName() {
-  if(confirm("Deseja trocar seu nome? Você precisará registrar um novo nome disponível.")) {
-    saveData.playerName = null;
-    saveToStorage();
-    location.reload();
-  }
-}
-
+// Carregamento inicial de dados
 const loadData = () => {
   const saved = localStorage.getItem('fpsForAllData');
   if (saved) {
     saveData = { ...saveData, ...JSON.parse(saved) };
+    // Se já tiver nome e UID, pula o login
     if (saveData.playerName && saveData.uid) {
       playerName = saveData.playerName;
       document.getElementById('login-screen').classList.add('hidden');
@@ -107,14 +111,22 @@ const saveToStorage = () => {
   updateMenuUI();
 };
 
-// --- RANKING ONLINE ---
+function changeName() {
+  if(confirm("Deseja trocar de nome? Você precisará registrar um novo nome disponível.")) {
+    saveData.playerName = null;
+    saveToStorage();
+    location.reload();
+  }
+}
+
+// --- RANKING E FIREBASE ---
 async function saveOnlineScore(name, score) {
   if (!saveData.uid) return;
   try {
     const scoreRef = db.collection("leaderboard").doc(saveData.uid);
     const doc = await scoreRef.get();
     
-    // Só atualiza se for o maior score deste UID
+    // Só envia se for recorde pessoal no banco
     if (!doc.exists || score > doc.data().score) {
       await scoreRef.set({
         name: name,
@@ -123,7 +135,7 @@ async function saveOnlineScore(name, score) {
         date: Date.now()
       });
     }
-  } catch (e) { console.error(e); }
+  } catch (e) { console.error("Falha ao salvar score:", e); }
 }
 
 async function loadLeaderboard() {
@@ -138,10 +150,10 @@ async function loadLeaderboard() {
       tbody.innerHTML += `<tr><td>${i}º</td><td>${data.name}</td><td>${data.score}</td></tr>`;
       i++;
     });
-  } catch (e) { tbody.innerHTML = "Erro ao carregar."; }
+  } catch (e) { tbody.innerHTML = "Erro ao carregar ranking."; }
 }
 
-// --- JOGO (LOGICA PRESERVADA) ---
+// --- LOGICA DO JOGO ---
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
@@ -174,33 +186,31 @@ function updateMenuUI() {
   const bonusTimeCost = 200 + (saveData.bonusTimeLevel * 300);
 
   document.getElementById('magnet-status').textContent = `Nível: ${saveData.magnetLevel}`;
-  document.getElementById('fire-status').textContent = `Nível: ${saveData.fireRateLevel}/10`;
-  document.getElementById('health-status').textContent = `Máximo: ${saveData.maxHealth}/50`;
+  document.getElementById('fire-status').textContent = `Nível: ${saveData.fireRateLevel} / 10`;
+  document.getElementById('health-status').textContent = `Máximo: ${saveData.maxHealth} / 50`;
   document.getElementById('bonus-time-status').textContent = `Nível: ${saveData.bonusTimeLevel}`;
 
   document.getElementById('btn-buy-magnet').textContent = `Upar (${magnetCost})`;
   
   const btnFire = document.getElementById('btn-buy-fire');
   if(saveData.fireRateLevel >= 10) { btnFire.textContent = "MAX"; btnFire.disabled = true; }
-  else { btnFire.textContent = `Upar (${fireCost})`; }
+  else { btnFire.textContent = `Upar (${fireCost})`; btnFire.disabled = false; }
 
   const btnHealth = document.getElementById('btn-buy-health');
   if(saveData.maxHealth >= 50) { btnHealth.textContent = "MAX"; btnHealth.disabled = true; }
-  else { btnHealth.textContent = `Upar (${healthReq} Recorde)`; }
+  else { btnHealth.textContent = `Upar (${healthReq} Recorde)`; btnHealth.disabled = false; }
 
   document.getElementById('btn-buy-bonus-time').textContent = `Upar (${bonusTimeCost})`;
 }
 
-// --- COMPRAS ---
+// Funções da Loja
 function buyMagnet() {
   const cost = 100 + (saveData.magnetLevel * 200);
   if (saveData.totalCoins >= cost) { saveData.totalCoins -= cost; saveData.magnetLevel++; saveToStorage(); }
 }
 function buyFireRate() {
   const cost = 150 + (saveData.fireRateLevel * 250);
-  if (saveData.totalCoins >= cost && saveData.fireRateLevel < 10) { 
-    saveData.totalCoins -= cost; saveData.fireRateLevel++; saveToStorage(); 
-  }
+  if (saveData.totalCoins >= cost && saveData.fireRateLevel < 10) { saveData.totalCoins -= cost; saveData.fireRateLevel++; saveToStorage(); }
 }
 function buyHealthUpgrade() {
   const req = 500 + ((saveData.maxHealth - 3) * 1000);
@@ -211,11 +221,11 @@ function buyBonusTime() {
   if (saveData.totalCoins >= cost) { saveData.totalCoins -= cost; saveData.bonusTimeLevel++; saveToStorage(); }
 }
 
-// --- LOOP ---
+// Estados do Jogo
 function startGame() {
   initVariables();
   gameState = 'PLAYING';
-  toggleScreen('ui-hud'); 
+  document.getElementById('menu-screen').classList.add('hidden');
   document.getElementById('ui-hud').classList.remove('hidden');
   document.getElementById('pause-btn').classList.remove('hidden');
   document.getElementById('joysticks').classList.remove('hidden');
@@ -232,9 +242,9 @@ function quitGame() {
   setTimeout(() => { location.reload(); }, 500);
 }
 
-function resetData() { if(confirm("Apagar tudo?")) { localStorage.clear(); location.reload(); } }
+function resetData() { if(confirm("Apagar todos os dados permanentemente?")) { localStorage.clear(); location.reload(); } }
 
-// --- CONTROLES (JOYSTICKS) ---
+// --- CONTROLES JOYSTICK ---
 const moveJoy = { active: false, id: 'move-joystick', x: 0, y: 0, originX: 0, originY: 0, identifier: null };
 const shootJoy = { active: false, id: 'shoot-joystick', x: 0, y: 0, originX: 0, originY: 0, identifier: null };
 
@@ -275,7 +285,7 @@ function updateHUD() {
   document.getElementById('score-display').textContent = `Score: ${currentScore}`;
   document.getElementById('coins-display').textContent = `Moedas: ${sessionCoins}`;
   const bonusDiv = document.getElementById('bonus-display');
-  if(bonusTimer > 0) { bonusDiv.style.display = 'block'; bonusDiv.textContent = `X2 COINS: ${Math.ceil(bonusTimer / 60)}s`; } 
+  if(bonusTimer > 0) { bonusDiv.style.display = 'block'; bonusDiv.textContent = `X2 ATIVO: ${Math.ceil(bonusTimer / 60)}s`; } 
   else { bonusDiv.style.display = 'none'; }
 }
 
@@ -297,6 +307,7 @@ function update() {
   if (gameState === 'PLAYING') {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    // Movimentação
     if (moveJoy.active) {
       player.x += (moveJoy.x/50)*player.speed;
       player.y += (moveJoy.y/50)*player.speed;
@@ -307,6 +318,7 @@ function update() {
     if (player.invincible) { player.invTimer--; if (player.invTimer <= 0) player.invincible = false; }
     if(bonusTimer > 0) { bonusTimer--; if(bonusTimer % 60 === 0) updateHUD(); }
 
+    // Tiro
     const now = Date.now();
     let currentFireRate = 150 - (saveData.fireRateLevel * 12); 
     if (shootJoy.active && (Math.abs(shootJoy.x) > 10 || Math.abs(shootJoy.y) > 10)) {
@@ -322,6 +334,7 @@ function update() {
       if(b.x < -10 || b.x > canvas.width + 10 || b.y < -10 || b.y > canvas.height + 10) bullets.splice(bi, 1);
     });
 
+    // Inimigos
     enemies.forEach((e, ei) => {
       const a = Math.atan2(player.y - e.y, player.x - e.x);
       e.x += Math.cos(a)*e.speed; e.y += Math.sin(a)*e.speed;
@@ -339,6 +352,7 @@ function update() {
       });
     });
 
+    // Moedas e Magnetismo
     coins.forEach((c, ci) => {
       const dist = Math.hypot(player.x-c.x, player.y-c.y);
       const magnetRange = 50 + (saveData.magnetLevel * 45);
@@ -351,6 +365,7 @@ function update() {
       }
     });
 
+    // Item de Bônus X2
     doubleItems.forEach((item, ii) => {
       item.life--;
       if(item.life <= 0) doubleItems.splice(ii, 1);
@@ -360,6 +375,7 @@ function update() {
       }
     });
 
+    // Spawns
     if (Math.random() < (0.02 + Math.min(currentScore/10000, 0.04))) {
       const speedBase = 2 + Math.random() + Math.min(currentScore/2000, 2);
       enemies.push({x: Math.random()*canvas.width, y: -30, radius: 15, color: '#e74c3c', speed: speedBase});
@@ -367,6 +383,7 @@ function update() {
     if (Math.random() < 0.0015) spawnItemPack(25);
     if (Math.random() < 0.001) spawnDoubleItem();
 
+    // Desenho
     enemies.forEach(e => drawCirc(e));
     bullets.forEach(b => drawCirc(b));
     coins.forEach(c => drawCirc(c));
