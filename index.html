@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>FPS for All</title>
+  <title>FPS for All - Online</title>
   <style>
     body, html { margin: 0; padding: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; touch-action: none; }
     #game-container { position: relative; width: 100vw; height: 100vh; user-select: none; }
@@ -20,16 +20,39 @@
     .joystick { width: 100px; height: 100px; background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.2); border-radius: 50%; position: relative; pointer-events: auto; }
     .joystick .inner { width: 40px; height: 40px; background: rgba(255,255,255,0.4); border-radius: 50%; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
     .shop-item { background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; margin: 10px; border: 1px solid #333; width: 280px; }
+    
+    table { width: 90%; max-width: 400px; border-collapse: collapse; margin: 15px 0; }
+    th { border-bottom: 2px solid #3498db; padding: 10px; color: #3498db; }
+    td { padding: 8px; border-bottom: 1px solid #333; }
+    input { padding: 15px; border-radius: 8px; border: 2px solid #3498db; width: 260px; text-align: center; font-size: 18px; background: #222; color: white; outline: none; margin-bottom: 10px; }
   </style>
 </head>
 <body>
   <div id="game-container">
-    <div id="menu-screen" class="overlay-screen">
+    
+    <div id="login-screen" class="overlay-screen">
+      <h1 style="color:#3498db; letter-spacing: 2px;">CRIAR CONTA</h1>
+      <p id="login-msg" style="color: #ccc;">Escolha seu nome único para o Ranking</p>
+      <input type="text" id="player-name-input" placeholder="Nome do usuário...">
+      <button id="btn-login" onclick="saveInitialName()">ENTRAR NO JOGO</button>
+    </div>
+
+    <div id="menu-screen" class="overlay-screen hidden">
       <h1 style="color:#3498db; letter-spacing: 5px;">FPS FOR ALL</h1>
       <button onclick="startGame()">COMEÇAR</button>
       <button onclick="toggleScreen('shop-screen')">LOJA</button>
+      <button onclick="toggleScreen('leaderboard-screen'); loadLeaderboard();">RANKING</button>
       <button onclick="toggleScreen('settings-screen')">CONFIGURAÇÕES</button>
       <p id="menu-stats" style="margin-top:20px; color: #888;"></p>
+    </div>
+
+    <div id="leaderboard-screen" class="overlay-screen hidden">
+      <h1>TOP 10 GLOBAL</h1>
+      <table>
+        <thead><tr><th>Pos</th><th>Nome</th><th>Score</th></tr></thead>
+        <tbody id="leaderboard-body"></tbody>
+      </table>
+      <button onclick="toggleScreen('menu-screen')">VOLTAR</button>
     </div>
 
     <div id="pause-screen" class="overlay-screen hidden">
@@ -41,36 +64,28 @@
     <div id="shop-screen" class="overlay-screen hidden">
       <h1>LOJA DE UPGRADES</h1>
       <p style="color:#f1c40f">Moedas: <span id="shop-coins-val">0</span></p>
-      
       <div class="shop-item">
-        <strong>Ímã de Moedas</strong>
-        <p id="magnet-status">Nível: 0</p>
+        <strong>Ímã de Moedas</strong><p id="magnet-status">Nível: 0</p>
         <button id="btn-buy-magnet" onclick="buyMagnet()">Upar</button>
       </div>
-
       <div class="shop-item">
-        <strong>Velocidade de Tiro</strong>
-        <p id="fire-status">Nível: 0 / 10</p>
+        <strong>Velocidade de Tiro</strong><p id="fire-status">Nível: 0 / 10</p>
         <button id="btn-buy-fire" onclick="buyFireRate()">Upar</button>
       </div>
-
       <div class="shop-item">
-        <strong>Upgrade de Vida</strong>
-        <p id="health-status">Máximo: 3 / 50</p>
+        <strong>Upgrade de Vida</strong><p id="health-status">Máximo: 3 / 50</p>
         <button id="btn-buy-health" onclick="buyHealthUpgrade()">Upar</button>
       </div>
-
       <div class="shop-item">
-        <strong>Tempo do Bônus X2</strong>
-        <p id="bonus-time-status">Nível: 0</p>
+        <strong>Tempo do Bônus X2</strong><p id="bonus-time-status">Nível: 0</p>
         <button id="btn-buy-bonus-time" onclick="buyBonusTime()">Upar</button>
       </div>
-
-      <button onclick="toggleScreen('menu-screen')" style="background:#444; min-width: 100px;">VOLTAR</button>
+      <button onclick="toggleScreen('menu-screen')" style="background:#444;">VOLTAR</button>
     </div>
 
     <div id="settings-screen" class="overlay-screen hidden">
       <h1>AJUSTES</h1>
+      <button onclick="changeName()" style="background: #f39c12;">TROCAR NOME</button>
       <button onclick="resetData()" style="background: #e74c3c;">APAGAR TUDO</button>
       <button onclick="toggleScreen('menu-screen')">VOLTAR</button>
     </div>
@@ -90,6 +105,9 @@
       <div id="shoot-joystick" class="joystick"><div class="inner"></div></div>
     </div>
   </div>
+
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
   <script src="game.js"></script>
 </body>
 </html>
