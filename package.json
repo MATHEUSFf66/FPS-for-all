@@ -1,0 +1,19 @@
+{
+  "name": "fps-for-all",
+  "version": "1.0.0",
+  "description": "A 2D FPS game with dual joystick controls and coin-dropping enemies",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx http-server",
+    "dev": "npx http-server -o"
+  },
+  "keywords": [
+    "game",
+    "fps",
+    "2d",
+    "mobile",
+    "joystick"
+  ],
+  "author": "",
+  "license": "MIT"
+}

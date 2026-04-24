@@ -1,2 +1,2 @@
-# FPS-for-all
-Jogo fps 2d
+# FPS for All
+um jogo de fps mobile e pc. 
