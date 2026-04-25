@@ -32,7 +32,7 @@ let player, enemies, bullets, coins, currentScore, sessionCoins, lastShot = 0;
 let doubleItems = []; 
 let bonusTimer = 0;   
 
-// --- SISTEMA DE LOGIN E UID ---
+// --- SISTEMA DE LOGIN ---
 async function saveInitialName() {
   const inputEl = document.getElementById('player-name-input');
   const nameInput = inputEl.value.trim();
@@ -82,7 +82,7 @@ async function saveInitialName() {
   }
 }
 
-// --- SALVAMENTO ONLINE (SCORE E COINS) ---
+// --- RANKING (SCORE E COINS) ---
 async function saveOnlineData() {
   if (!saveData.uid || !playerName) return;
   try {
@@ -117,7 +117,7 @@ async function loadLeaderboard() {
   } catch (e) { tbody.innerHTML = "Erro ao carregar."; }
 }
 
-// --- FUNÇÕES DE INTERFACE ---
+// --- PERSISTÊNCIA ---
 const loadData = () => {
   const saved = localStorage.getItem('fpsForAllData');
   if (saved) {
@@ -152,6 +152,7 @@ function toggleScreen(screenId) {
   document.getElementById(screenId).classList.remove('hidden');
 }
 
+// --- UI E LOJA ---
 function updateMenuUI() {
   document.getElementById('menu-stats').textContent = `Recorde: ${saveData.highScore} | Moedas: ${saveData.totalCoins}`;
   document.getElementById('shop-coins-val').textContent = saveData.totalCoins;
@@ -169,15 +170,14 @@ function updateMenuUI() {
   document.getElementById('btn-buy-magnet').textContent = `Upar (${magnetCost})`;
   const btnFire = document.getElementById('btn-buy-fire');
   if(saveData.fireRateLevel >= 10) { btnFire.textContent = "MAX"; btnFire.disabled = true; }
-  else { btnFire.textContent = `Upar (${fireCost})`; }
+  else { btnFire.textContent = `Upar (${fireCost})`; btnFire.disabled = false; }
 
   const btnHealth = document.getElementById('btn-buy-health');
   if(saveData.maxHealth >= 50) { btnHealth.textContent = "MAX"; btnHealth.disabled = true; }
-  else { btnHealth.textContent = `Upar (${healthReq} Recorde)`; }
+  else { btnHealth.textContent = `Upar (${healthReq} Recorde)`; btnHealth.disabled = false; }
   document.getElementById('btn-buy-bonus-time').textContent = `Upar (${bonusTimeCost})`;
 }
 
-// LOJA
 function buyMagnet() {
   const cost = 100 + (saveData.magnetLevel * 200);
   if (saveData.totalCoins >= cost) { saveData.totalCoins -= cost; saveData.magnetLevel++; saveToStorage(); }
@@ -195,7 +195,7 @@ function buyBonusTime() {
   if (saveData.totalCoins >= cost) { saveData.totalCoins -= cost; saveData.bonusTimeLevel++; saveToStorage(); }
 }
 
-// --- MECÂNICAS DO JOGO ---
+// --- MECÂNICAS ---
 function initVariables() {
   player = {
     x: canvas.width/2, y: canvas.height/2, radius: 20, color: '#3498db', speed: 5.5,
@@ -216,13 +216,24 @@ function startGame() {
   document.getElementById('joysticks').classList.remove('hidden');
 }
 
+function pauseGame() {
+  if(gameState === 'PLAYING') {
+    gameState = 'PAUSED';
+    document.getElementById('pause-screen').classList.remove('hidden');
+  }
+}
+
+function resumeGame() {
+  gameState = 'PLAYING';
+  document.getElementById('pause-screen').classList.add('hidden');
+}
+
 async function quitGame() {
   saveData.totalCoins += sessionCoins;
   if (currentScore > saveData.highScore) saveData.highScore = currentScore;
   saveToStorage();
   
-  // HUD de salvamento
-  document.getElementById('score-display').textContent = "Salvando dados...";
+  document.getElementById('score-display').textContent = "Sincronizando...";
   await saveOnlineData();
   
   location.reload();
@@ -285,6 +296,7 @@ function updateHUD() {
   else b.style.display='none';
 }
 
+// --- LOOP PRINCIPAL ---
 function update() {
   if (gameState === 'PLAYING') {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -293,6 +305,7 @@ function update() {
     if (moveJoy.active) { player.x += (moveJoy.x/45)*player.speed; player.y += (moveJoy.y/45)*player.speed; }
     player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
     player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+    
     if (player.invincible) { player.invTimer--; if (player.invTimer <= 0) player.invincible = false; }
     if(bonusTimer > 0) { bonusTimer--; if(bonusTimer % 60 === 0) updateHUD(); }
 
@@ -338,7 +351,7 @@ function update() {
       if(d < player.radius + c.radius) { sessionCoins += (bonusTimer > 0 ? 2 : 1); updateHUD(); coins.splice(ci, 1); }
     });
 
-    // Itens Especiais (X2)
+    // Itens X2
     doubleItems.forEach((item, ii) => {
       item.life--; if(item.life <= 0) doubleItems.splice(ii, 1);
       if(Math.hypot(player.x - item.x, player.y - item.y) < player.radius + item.radius) {
@@ -353,7 +366,7 @@ function update() {
     if (Math.random() < 0.0015) spawnItemPack(20);
     if (Math.random() < 0.001) doubleItems.push({ x: 50 + Math.random() * (canvas.width - 100), y: 50 + Math.random() * (canvas.height - 100), radius: 18, color: '#2ecc71', life: 600 });
     
-    // Draw
+    // Renderização
     enemies.forEach(e => drawCirc(e));
     bullets.forEach(b => drawCirc(b));
     coins.forEach(c => drawCirc(c));
