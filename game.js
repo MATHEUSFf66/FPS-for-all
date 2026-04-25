@@ -8,16 +8,8 @@ const firebaseConfig = {
   appId: "1:1060982063527:web:98ea23b2569cea849ff682"
 };
 
-// Inicializa Firebase
-if (!firebase.apps.length) {
-    firebase.initializeApp(firebaseConfig);
-}
+if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
-
-// Ativa persistência para funcionar melhor em navegadores
-db.enablePersistence().catch((err) => {
-    console.error("Erro de persistência:", err.code);
-});
 
 // --- VARIÁVEIS GLOBAIS ---
 const canvas = document.getElementById('game-canvas');
@@ -26,14 +18,8 @@ let playerName = "";
 let gameState = 'LOGIN';
 
 let saveData = { 
-  playerName: null,
-  uid: null,
-  highScore: 0, 
-  totalCoins: 0, 
-  magnetLevel: 0, 
-  maxHealth: 3, 
-  fireRateLevel: 0,
-  bonusTimeLevel: 0 
+  playerName: null, uid: null, highScore: 0, totalCoins: 0, 
+  magnetLevel: 0, maxHealth: 3, fireRateLevel: 0, bonusTimeLevel: 0 
 };
 
 let player, enemies, bullets, coins, currentScore, sessionCoins, lastShot = 0;
@@ -55,16 +41,11 @@ async function saveInitialName() {
   btn.textContent = "Conectando...";
 
   try {
-    // Garante UID
-    if (!saveData.uid) {
-      saveData.uid = "u_" + Math.random().toString(36).substr(2, 9) + Date.now();
-    }
-
+    if (!saveData.uid) saveData.uid = "u_" + Math.random().toString(36).substr(2, 9) + Date.now();
     const nameLower = nameInput.toLowerCase();
     const userRef = db.collection("users").doc(nameLower);
     const doc = await userRef.get();
 
-    // Se o nome existe e não é o meu UID
     if (doc.exists && doc.data().uid !== saveData.uid) {
       alert("Este nome já pertence a outro jogador!");
       btn.disabled = false;
@@ -72,13 +53,7 @@ async function saveInitialName() {
       return;
     }
 
-    // Salva o vínculo do nome com o UID
-    await userRef.set({
-      uid: saveData.uid,
-      displayName: nameInput,
-      lastActive: Date.now()
-    });
-
+    await userRef.set({ uid: saveData.uid, displayName: nameInput, lastActive: Date.now() });
     playerName = nameInput;
     saveData.playerName = playerName;
     saveToStorage();
@@ -86,12 +61,10 @@ async function saveInitialName() {
     document.getElementById('login-screen').classList.add('hidden');
     document.getElementById('menu-screen').classList.remove('hidden');
     gameState = 'MENU';
-
   } catch (error) {
-    console.error("Erro Login:", error);
-    alert("Erro ao criar conta. Verifique sua conexão ou as regras do banco.");
+    console.error(error);
+    alert("Erro ao conectar.");
     btn.disabled = false;
-    btn.textContent = "ENTRAR";
   }
 }
 
@@ -111,23 +84,17 @@ async function saveOnlineData() {
 }
 
 async function resetData() {
-  if (confirm("ATENÇÃO: Isso apagará seu progresso local e sua pontuação no Ranking Global. Continuar?")) {
+  if (confirm("Apagar tudo? Isso removerá você do Ranking também.")) {
     try {
-      // 1. Apaga do Ranking Global
       if (saveData.uid) {
+        // Remove do Ranking
         await db.collection("leaderboard").doc(saveData.uid).delete();
-        // Opcional: Apagar também o registro de nome para liberar o nome para outros
-        const nameKey = playerName ? playerName.toLowerCase() : "";
-        if(nameKey) await db.collection("users").doc(nameKey).delete();
+        // Libera o nome para outros
+        if(playerName) await db.collection("users").doc(playerName.toLowerCase()).delete();
       }
-      
-      // 2. Limpa localmente
       localStorage.clear();
       location.reload();
-    } catch (e) {
-      console.error("Erro ao resetar:", e);
-      alert("Erro ao limpar dados do servidor.");
-    }
+    } catch (e) { console.error(e); }
   }
 }
 
@@ -181,6 +148,10 @@ function toggleScreen(screenId) {
 
 // --- UI E LOJA ---
 function updateMenuUI() {
+  // Exibe nome no Menu
+  const nameDisplay = document.getElementById('display-player-name');
+  if (nameDisplay) nameDisplay.textContent = `Olá, ${playerName || 'Jogador'}`;
+
   document.getElementById('menu-stats').textContent = `Recorde: ${saveData.highScore} | Moedas: ${saveData.totalCoins}`;
   document.getElementById('shop-coins-val').textContent = saveData.totalCoins;
   
@@ -205,6 +176,7 @@ function updateMenuUI() {
   document.getElementById('btn-buy-bonus-time').textContent = `Upar (${bonusTimeCost})`;
 }
 
+// Funções da Loja
 function buyMagnet() {
   const cost = 100 + (saveData.magnetLevel * 200);
   if (saveData.totalCoins >= cost) { saveData.totalCoins -= cost; saveData.magnetLevel++; saveToStorage(); }
@@ -255,15 +227,40 @@ function resumeGame() {
   document.getElementById('pause-screen').classList.add('hidden');
 }
 
-async function quitGame() {
+// NOVO: Função de Game Over
+async function triggerGameOver() {
+  gameState = 'GAMEOVER';
+  
+  // Salva moedas e recorde
   saveData.totalCoins += sessionCoins;
-  if (currentScore > saveData.highScore) saveData.highScore = currentScore;
+  let isNewRecord = false;
+  if (currentScore > saveData.highScore) {
+    saveData.highScore = currentScore;
+    isNewRecord = true;
+  }
   saveToStorage();
-  
-  document.getElementById('score-display').textContent = "Sincronizando...";
+
+  // Exibe tela de Game Over
+  const statsDiv = document.getElementById('gameover-stats');
+  statsDiv.innerHTML = `
+    <p>Pontuação: <strong>${currentScore}</strong> ${isNewRecord ? '<br><span style="color: #f1c40f;">(NOVO RECORDE!)</span>' : ''}</p>
+    <p>Moedas: <strong>${sessionCoins}</strong></p>
+    <p id="save-status" style="font-size: 0.8rem; color: #bdc3c7;">Sincronizando Ranking...</p>
+  `;
+
+  document.getElementById('ui-hud').classList.add('hidden');
+  document.getElementById('pause-btn').classList.add('hidden');
+  document.getElementById('joysticks').classList.add('hidden');
+  document.getElementById('gameover-screen').classList.remove('hidden');
+
+  // Envia ao Firebase
   await saveOnlineData();
-  
-  location.reload();
+  const status = document.getElementById('save-status');
+  if(status) { status.textContent = "✓ Sincronizado!"; status.style.color = "#2ecc71"; }
+}
+
+function quitGame() {
+  if(confirm("Sair agora? Seu progresso será salvo.")) triggerGameOver();
 }
 
 function spawnItemPack(amount) {
@@ -276,7 +273,7 @@ function spawnItemPack(amount) {
   }
 }
 
-// --- CONTROLES (JOYSTICKS) ---
+// --- CONTROLES ---
 const moveJoy = { active: false, id: 'move-joystick', x: 0, y: 0, originX: 0, originY: 0, identifier: null };
 const shootJoy = { active: false, id: 'shoot-joystick', x: 0, y: 0, originX: 0, originY: 0, identifier: null };
 
@@ -353,7 +350,8 @@ function update() {
       e.x += Math.cos(a)*e.speed; e.y += Math.sin(a)*e.speed;
       if(Math.hypot(player.x-e.x, player.y-e.y) < player.radius+e.radius && !player.invincible) {
         player.health--; player.invincible = true; player.invTimer = 60; updateHUD();
-        enemies.splice(ei, 1); if(player.health <= 0) quitGame();
+        enemies.splice(ei, 1); 
+        if(player.health <= 0) triggerGameOver(); // MORREU
       }
       bullets.forEach((b, bi) => {
         if(Math.hypot(b.x-e.x, b.y-e.y) < b.radius+e.radius) {
@@ -396,7 +394,6 @@ function update() {
 }
 
 function drawCirc(o) { ctx.beginPath(); ctx.arc(o.x, o.y, o.radius, 0, Math.PI*2); ctx.fillStyle = o.color; ctx.fill(); ctx.closePath(); }
-
 function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
