@@ -8,8 +8,16 @@ const firebaseConfig = {
   appId: "1:1060982063527:web:98ea23b2569cea849ff682"
 };
 
-firebase.initializeApp(firebaseConfig);
+// Inicializa Firebase
+if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+}
 const db = firebase.firestore();
+
+// Ativa persistência para funcionar melhor em navegadores
+db.enablePersistence().catch((err) => {
+    console.error("Erro de persistência:", err.code);
+});
 
 // --- VARIÁVEIS GLOBAIS ---
 const canvas = document.getElementById('game-canvas');
@@ -44,16 +52,19 @@ async function saveInitialName() {
   }
 
   btn.disabled = true;
-  btn.textContent = "Verificando...";
+  btn.textContent = "Conectando...";
 
   try {
+    // Garante UID
     if (!saveData.uid) {
       saveData.uid = "u_" + Math.random().toString(36).substr(2, 9) + Date.now();
     }
 
-    const userRef = db.collection("users").doc(nameInput.toLowerCase());
+    const nameLower = nameInput.toLowerCase();
+    const userRef = db.collection("users").doc(nameLower);
     const doc = await userRef.get();
 
+    // Se o nome existe e não é o meu UID
     if (doc.exists && doc.data().uid !== saveData.uid) {
       alert("Este nome já pertence a outro jogador!");
       btn.disabled = false;
@@ -61,6 +72,7 @@ async function saveInitialName() {
       return;
     }
 
+    // Salva o vínculo do nome com o UID
     await userRef.set({
       uid: saveData.uid,
       displayName: nameInput,
@@ -76,30 +88,47 @@ async function saveInitialName() {
     gameState = 'MENU';
 
   } catch (error) {
-    console.error(error);
-    alert("Erro ao conectar.");
+    console.error("Erro Login:", error);
+    alert("Erro ao criar conta. Verifique sua conexão ou as regras do banco.");
     btn.disabled = false;
+    btn.textContent = "ENTRAR";
   }
 }
 
-// --- RANKING (SCORE E COINS) ---
+// --- RANKING E RESET ---
 async function saveOnlineData() {
   if (!saveData.uid || !playerName) return;
   try {
     const scoreRef = db.collection("leaderboard").doc(saveData.uid);
-    const doc = await scoreRef.get();
-    
-    // Atualiza se o score for maior OU se o nome mudou
-    if (!doc.exists || saveData.highScore > (doc.data().score || 0) || doc.data().name !== playerName) {
-      await scoreRef.set({
-        name: playerName,
-        score: saveData.highScore,
-        coins: saveData.totalCoins,
-        uid: saveData.uid,
-        date: Date.now()
-      }, { merge: true });
-    }
+    await scoreRef.set({
+      name: playerName,
+      score: saveData.highScore,
+      coins: saveData.totalCoins,
+      uid: saveData.uid,
+      date: Date.now()
+    }, { merge: true });
   } catch (e) { console.error("Erro Ranking:", e); }
+}
+
+async function resetData() {
+  if (confirm("ATENÇÃO: Isso apagará seu progresso local e sua pontuação no Ranking Global. Continuar?")) {
+    try {
+      // 1. Apaga do Ranking Global
+      if (saveData.uid) {
+        await db.collection("leaderboard").doc(saveData.uid).delete();
+        // Opcional: Apagar também o registro de nome para liberar o nome para outros
+        const nameKey = playerName ? playerName.toLowerCase() : "";
+        if(nameKey) await db.collection("users").doc(nameKey).delete();
+      }
+      
+      // 2. Limpa localmente
+      localStorage.clear();
+      location.reload();
+    } catch (e) {
+      console.error("Erro ao resetar:", e);
+      alert("Erro ao limpar dados do servidor.");
+    }
+  }
 }
 
 async function loadLeaderboard() {
@@ -144,8 +173,6 @@ function changeName() {
     location.reload();
   }
 }
-
-function resetData() { if(confirm("Apagar tudo?")) { localStorage.clear(); location.reload(); } }
 
 function toggleScreen(screenId) {
   document.querySelectorAll('.overlay-screen').forEach(s => s.classList.add('hidden'));
@@ -301,15 +328,12 @@ function update() {
   if (gameState === 'PLAYING') {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // Player
     if (moveJoy.active) { player.x += (moveJoy.x/45)*player.speed; player.y += (moveJoy.y/45)*player.speed; }
     player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
     player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
-    
     if (player.invincible) { player.invTimer--; if (player.invTimer <= 0) player.invincible = false; }
     if(bonusTimer > 0) { bonusTimer--; if(bonusTimer % 60 === 0) updateHUD(); }
 
-    // Tiro
     const now = Date.now();
     let fr = 150 - (saveData.fireRateLevel * 12); 
     if (shootJoy.active && (Math.abs(shootJoy.x) > 5 || Math.abs(shootJoy.y) > 5)) {
@@ -324,7 +348,6 @@ function update() {
       if(b.x < -10 || b.x > canvas.width + 10 || b.y < -10 || b.y > canvas.height + 10) bullets.splice(bi, 1);
     });
 
-    // Inimigos
     enemies.forEach((e, ei) => {
       const a = Math.atan2(player.y-e.y, player.x-e.x);
       e.x += Math.cos(a)*e.speed; e.y += Math.sin(a)*e.speed;
@@ -341,7 +364,6 @@ function update() {
       });
     });
 
-    // Moedas e Ímã
     coins.forEach((c, ci) => {
       const d = Math.hypot(player.x-c.x, player.y-c.y);
       if(saveData.magnetLevel > 0 && d < 50 + (saveData.magnetLevel * 45)) {
@@ -351,7 +373,6 @@ function update() {
       if(d < player.radius + c.radius) { sessionCoins += (bonusTimer > 0 ? 2 : 1); updateHUD(); coins.splice(ci, 1); }
     });
 
-    // Itens X2
     doubleItems.forEach((item, ii) => {
       item.life--; if(item.life <= 0) doubleItems.splice(ii, 1);
       if(Math.hypot(player.x - item.x, player.y - item.y) < player.radius + item.radius) {
@@ -359,14 +380,12 @@ function update() {
       }
     });
 
-    // Spawns
     if (Math.random() < (0.02 + Math.min(currentScore/10000, 0.04))) {
       enemies.push({x: Math.random()*canvas.width, y: -30, radius: 15, color: '#e74c3c', speed: 2 + Math.random() + Math.min(currentScore/2000, 2)});
     }
     if (Math.random() < 0.0015) spawnItemPack(20);
     if (Math.random() < 0.001) doubleItems.push({ x: 50 + Math.random() * (canvas.width - 100), y: 50 + Math.random() * (canvas.height - 100), radius: 18, color: '#2ecc71', life: 600 });
     
-    // Renderização
     enemies.forEach(e => drawCirc(e));
     bullets.forEach(b => drawCirc(b));
     coins.forEach(c => drawCirc(c));
