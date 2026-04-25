@@ -62,7 +62,6 @@ async function saveInitialName() {
     document.getElementById('menu-screen').classList.remove('hidden');
     gameState = 'MENU';
   } catch (error) {
-    console.error(error);
     alert("Erro ao conectar.");
     btn.disabled = false;
   }
@@ -84,17 +83,15 @@ async function saveOnlineData() {
 }
 
 async function resetData() {
-  if (confirm("Apagar tudo? Isso removerá você do Ranking também.")) {
+  if (confirm("Deseja apagar tudo? Isso removerá você do Ranking Global também!")) {
     try {
       if (saveData.uid) {
-        // Remove do Ranking
         await db.collection("leaderboard").doc(saveData.uid).delete();
-        // Libera o nome para outros
         if(playerName) await db.collection("users").doc(playerName.toLowerCase()).delete();
       }
       localStorage.clear();
       location.reload();
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error("Erro ao resetar:", e); }
   }
 }
 
@@ -148,7 +145,7 @@ function toggleScreen(screenId) {
 
 // --- UI E LOJA ---
 function updateMenuUI() {
-  // Exibe nome no Menu
+  // Exibe o nome do jogador abaixo do título MENU
   const nameDisplay = document.getElementById('display-player-name');
   if (nameDisplay) nameDisplay.textContent = `Olá, ${playerName || 'Jogador'}`;
 
@@ -176,7 +173,7 @@ function updateMenuUI() {
   document.getElementById('btn-buy-bonus-time').textContent = `Upar (${bonusTimeCost})`;
 }
 
-// Funções da Loja
+// Funções de Compra da Loja
 function buyMagnet() {
   const cost = 100 + (saveData.magnetLevel * 200);
   if (saveData.totalCoins >= cost) { saveData.totalCoins -= cost; saveData.magnetLevel++; saveToStorage(); }
@@ -227,11 +224,9 @@ function resumeGame() {
   document.getElementById('pause-screen').classList.add('hidden');
 }
 
-// NOVO: Função de Game Over
+// TELA DE GAME OVER
 async function triggerGameOver() {
   gameState = 'GAMEOVER';
-  
-  // Salva moedas e recorde
   saveData.totalCoins += sessionCoins;
   let isNewRecord = false;
   if (currentScore > saveData.highScore) {
@@ -240,12 +235,11 @@ async function triggerGameOver() {
   }
   saveToStorage();
 
-  // Exibe tela de Game Over
   const statsDiv = document.getElementById('gameover-stats');
   statsDiv.innerHTML = `
-    <p>Pontuação: <strong>${currentScore}</strong> ${isNewRecord ? '<br><span style="color: #f1c40f;">(NOVO RECORDE!)</span>' : ''}</p>
-    <p>Moedas: <strong>${sessionCoins}</strong></p>
-    <p id="save-status" style="font-size: 0.8rem; color: #bdc3c7;">Sincronizando Ranking...</p>
+    <p>Pontuação Final: <strong>${currentScore}</strong> ${isNewRecord ? '<br><span style="color: #f1c40f;">(NOVO RECORDE!)</span>' : ''}</p>
+    <p>Moedas nesta partida: <strong>${sessionCoins}</strong></p>
+    <p id="save-status" style="font-size: 0.8rem; color: #bdc3c7;">Sincronizando com o ranking...</p>
   `;
 
   document.getElementById('ui-hud').classList.add('hidden');
@@ -253,14 +247,13 @@ async function triggerGameOver() {
   document.getElementById('joysticks').classList.add('hidden');
   document.getElementById('gameover-screen').classList.remove('hidden');
 
-  // Envia ao Firebase
   await saveOnlineData();
   const status = document.getElementById('save-status');
-  if(status) { status.textContent = "✓ Sincronizado!"; status.style.color = "#2ecc71"; }
+  if(status) { status.textContent = "✓ Pontuação Sincronizada!"; status.style.color = "#2ecc71"; }
 }
 
 function quitGame() {
-  if(confirm("Sair agora? Seu progresso será salvo.")) triggerGameOver();
+  if(confirm("Deseja sair? Seu progresso atual será salvo.")) triggerGameOver();
 }
 
 function spawnItemPack(amount) {
@@ -273,7 +266,7 @@ function spawnItemPack(amount) {
   }
 }
 
-// --- CONTROLES ---
+// --- CONTROLES (JOYSTICKS) ---
 const moveJoy = { active: false, id: 'move-joystick', x: 0, y: 0, originX: 0, originY: 0, identifier: null };
 const shootJoy = { active: false, id: 'shoot-joystick', x: 0, y: 0, originX: 0, originY: 0, identifier: null };
 
@@ -325,12 +318,15 @@ function update() {
   if (gameState === 'PLAYING') {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
+    // Movimento Player
     if (moveJoy.active) { player.x += (moveJoy.x/45)*player.speed; player.y += (moveJoy.y/45)*player.speed; }
     player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
     player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+    
     if (player.invincible) { player.invTimer--; if (player.invTimer <= 0) player.invincible = false; }
     if(bonusTimer > 0) { bonusTimer--; if(bonusTimer % 60 === 0) updateHUD(); }
 
+    // Mecânica de Tiro
     const now = Date.now();
     let fr = 150 - (saveData.fireRateLevel * 12); 
     if (shootJoy.active && (Math.abs(shootJoy.x) > 5 || Math.abs(shootJoy.y) > 5)) {
@@ -345,14 +341,19 @@ function update() {
       if(b.x < -10 || b.x > canvas.width + 10 || b.y < -10 || b.y > canvas.height + 10) bullets.splice(bi, 1);
     });
 
+    // Inimigos e Colisões
     enemies.forEach((e, ei) => {
       const a = Math.atan2(player.y-e.y, player.x-e.x);
       e.x += Math.cos(a)*e.speed; e.y += Math.sin(a)*e.speed;
+      
+      // Colisão Inimigo x Player
       if(Math.hypot(player.x-e.x, player.y-e.y) < player.radius+e.radius && !player.invincible) {
         player.health--; player.invincible = true; player.invTimer = 60; updateHUD();
         enemies.splice(ei, 1); 
-        if(player.health <= 0) triggerGameOver(); // MORREU
+        if(player.health <= 0) triggerGameOver();
       }
+
+      // Colisão Inimigo x Tiro
       bullets.forEach((b, bi) => {
         if(Math.hypot(b.x-e.x, b.y-e.y) < b.radius+e.radius) {
           currentScore += 10; updateHUD();
@@ -362,6 +363,7 @@ function update() {
       });
     });
 
+    // Moedas e Ímã
     coins.forEach((c, ci) => {
       const d = Math.hypot(player.x-c.x, player.y-c.y);
       if(saveData.magnetLevel > 0 && d < 50 + (saveData.magnetLevel * 45)) {
@@ -371,6 +373,7 @@ function update() {
       if(d < player.radius + c.radius) { sessionCoins += (bonusTimer > 0 ? 2 : 1); updateHUD(); coins.splice(ci, 1); }
     });
 
+    // Itens X2
     doubleItems.forEach((item, ii) => {
       item.life--; if(item.life <= 0) doubleItems.splice(ii, 1);
       if(Math.hypot(player.x - item.x, player.y - item.y) < player.radius + item.radius) {
@@ -378,12 +381,24 @@ function update() {
       }
     });
 
+    // SISTEMA DE SPAWN (Fiel ao seu original)
     if (Math.random() < (0.02 + Math.min(currentScore/10000, 0.04))) {
-      enemies.push({x: Math.random()*canvas.width, y: -30, radius: 15, color: '#e74c3c', speed: 2 + Math.random() + Math.min(currentScore/2000, 2)});
+      enemies.push({
+          x: Math.random()*canvas.width, 
+          y: -30, 
+          radius: 15, 
+          color: '#e74c3c', 
+          speed: 2 + Math.random() + Math.min(currentScore/2000, 2)
+      });
     }
     if (Math.random() < 0.0015) spawnItemPack(20);
-    if (Math.random() < 0.001) doubleItems.push({ x: 50 + Math.random() * (canvas.width - 100), y: 50 + Math.random() * (canvas.height - 100), radius: 18, color: '#2ecc71', life: 600 });
+    if (Math.random() < 0.001) doubleItems.push({ 
+        x: 50 + Math.random() * (canvas.width - 100), 
+        y: 50 + Math.random() * (canvas.height - 100), 
+        radius: 18, color: '#2ecc71', life: 600 
+    });
     
+    // Desenho
     enemies.forEach(e => drawCirc(e));
     bullets.forEach(b => drawCirc(b));
     coins.forEach(c => drawCirc(c));
